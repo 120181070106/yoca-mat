@@ -131,7 +131,7 @@ class TaskAlignedAssigner(nn.Module):
         # target_gt_idx     b, 8400     每个anchor符合哪个gt
         # fg_mask           b, 8400     每个anchor是否有符合的gt
         # mask_pos          b, max_num_obj, 8400    one_hot后的target_gt_idx
-        target_gt_idx, fg_mask, mask_pos, 明权 = select_highest_overlaps(mask_pos, overlaps, self.n_max_boxes)
+        target_gt_idx, fg_mask, mask_pos,明权 = select_highest_overlaps(mask_pos, overlaps, self.n_max_boxes)
 
         # 指定目标到对应的anchor点上
         # b, 8400
@@ -152,7 +152,7 @@ class TaskAlignedAssigner(nn.Module):
         # target_scores作为正则的标签
         target_scores       = target_scores * norm_align_metric
 
-        return target_labels, target_bboxes, target_scores, fg_mask.bool(), target_gt_idx, 明权
+        return target_labels, target_bboxes, target_scores, fg_mask.bool(), target_gt_idx,明权
 
     def get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt):
         # pd_scores bs, num_total_anchors, num_classes
@@ -178,8 +178,8 @@ class TaskAlignedAssigner(nn.Module):
         对齐矩阵 = overlaps * mask_in_gts #(b,n,8k)
         阈值行矢 = torch.max(对齐矩阵,dim=1,keepdim=True)[0]/3
         对齐矩阵 = 对齐矩阵*(对齐矩阵>阈值行矢)
+        mask_topk = 对齐矩阵>0 #原self.select_topk_candidates(对齐矩阵,..)
         # mask_topk               = self.select_topk_candidates(align_metric * mask_in_gts, topk_mask=mask_gt.repeat([1, 1, self.topk]).bool())
-        mask_topk               = 对齐矩阵>0
         # merge all mask to a final mask, b, max_num_obj, h*w
         # 真实框存在，非padding
         mask_pos                = mask_topk * mask_in_gts * mask_gt
@@ -423,7 +423,7 @@ class Loss:
         # 然后解码获得预测框
         return dist2bbox(pred_dist, anchor_points, xywh=False)
 
-    def __call__(self, preds, batch, epoch):
+    def __call__(self, preds, batch,epoch):
         # 获得使用的device
         device  = preds[1].device
         # box, cls, dfl三部分的损失
@@ -474,14 +474,12 @@ class Loss:
         )
 
         target_bboxes       /= stride_tensor
-        target_scores_sum   = max((target_scores).sum(), 1)
+        target_scores_sum   = max(target_scores.sum(), 1)
 
         # 计算分类的损失
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
-        # print(明权.shape,self.bce(pred_scores, target_scores.to(dtype)).shape,target_scores.shape)
-        # print(明权)
-        loss[1] = (self.bce(pred_scores, target_scores.to(dtype))).sum() / target_scores_sum  # BCE
-        if epoch<300: target_scores*=明权.unsqueeze(-1)
+        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
+        if epoch<300: target_scores *= 明权.unsqueeze(-1)
 
         # 计算bbox的损失
         if fg_mask.sum():

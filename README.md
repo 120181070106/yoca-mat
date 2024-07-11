@@ -88,3 +88,38 @@ annotation_mode     = 2 #基本的集合已被划分于ImageSeg文件夹，现�
     fig.canvas.manager.set_window_title(window_title)#第241行
                 fig.canvas.manager.set_window_title('AP ' + class_name)#609行
 ```
+匹配部分
+```
+#-----------------------(yolo_training.py)--------------------------#
+def select_highest_overlaps(mask_pos, overlaps, n_max_boxes): #41行
+    # fg_mask = mask_pos.sum(-2)
+    首值=torch.topk(overlaps,k=2,dim=1)[0]
+    明权=torch.clamp(torch.log2(首值[:,1]/(首值[:,0]+1e-9)),max=3,min=0.0001)
+    overlaps *= mask_pos
+    和值矢量 = mask_pos.sum(-1)
+    调比系数 = 8/(和值矢量+3)+1 #避免了分母为零的问题，也是可能的实验点
+    overlaps *= 调比系数.unsqueeze(-1)
+    #print(torch.bincount(target_gt_idx[0].reshape(-1)))#显示真框受匹结果，原算法常<10
+    return target_gt_idx, fg_mask, mask_pos, 明权 #不要忘了这里的明权！
+class TaskAlignedAssigner(nn.Module):#用下一函数粗选后代入上一函数,添加", 明权"作入出
+        target_gt_idx,fg_mask,mask_pos,明权 = select_highest_overlaps() #134行
+        # mask_pos               = self.select_topk_candidates(align_metric * mask_pos, topk_mask=mask_gt.repeat([1, 1, self.topk]).bool())
+        # target_gt_idx, fg_mask, mask_pos = select_highest_overlaps(mask_pos, overlaps, self.n_max_boxes)#这个限数似乎没必要，限在10内但原算法总有冒头的，只能说能够beat不限数的原算法(74>70)，也就是傻傻的取预框最对应的真框（绝对纯情）的情况
+        return target_labels, .., target_gt_idx, 明权
+    def get_pos_mask(self, pd_scores..):
+        # mask_in_gts             = select_candidates_in_gts()
+        对齐矩阵 = overlaps * mask_in_gts #(b,n,8k)
+        阈值行矢 = torch.max(对齐矩阵,dim=1,keepdim=True)[0]/3
+        对齐矩阵 = 对齐矩阵*(对齐矩阵>阈值行矢)
+        mask_topk = 对齐矩阵>0 #原self.select_topk_candidates(对齐矩阵,..)
+        # mask_topk = self.select_topk_candidates(align_metric * mask_in_gts, topk_mask=mask_gt.repeat([1, 1, self.topk]).bool()) 这句注释掉!
+class Loss: #378/426行左右
+    def __call__(self, preds, batch, epoch): #加入轮数控制干扰权重，超三百关停
+        _, target_bboxes, target_scores, fg_mask, _, 明权 = self.assigner()
+        # loss[1] = (self.bce(pred_scores, target_scores.to(dtype))).sum() / target_scores_sum  # BCE
+        if epoch<300: target_scores *= 明权.unsqueeze(-1)
+#-----------------------(utils_fit.py)--------------------------#
+            loss_value = yolo_loss(outputs, bboxes, epoch) #35行，就是补上批次作损入参
+                loss_value = yolo_loss(outputs, bboxes, epoch) #49行 
+            loss_value  = yolo_loss(outputs, bboxes, epoch) #96行           
+```
